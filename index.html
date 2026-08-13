@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AR 双手手势交互特效</title>
+  <link rel="stylesheet" href="src/styles.css">
+</head>
+<body>
+  <canvas id="stage"></canvas>
+  <video id="camera-feed" playsinline muted autoplay></video>
+
+  <div id="status" class="status hidden" role="status" aria-live="polite"></div>
+  <div id="hint" class="hint hidden"></div>
+
+  <div id="controls" class="controls">
+    <button id="btn-camera" class="btn primary" type="button">启动摄像头</button>
+    <button id="btn-demo" class="btn" type="button">演示模式</button>
+    <button id="btn-reset" class="btn" type="button">重置</button>
+    <label class="smooth" for="smooth-range">
+      <span>跟手平滑度</span>
+      <input id="smooth-range" type="range" min="0" max="100" value="55">
+      <output id="smooth-value" for="smooth-range">55</output>
+    </label>
+  </div>
+
+  <script src="src/app.js"></script>
+</body>
+</html>

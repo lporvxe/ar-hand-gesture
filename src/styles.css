@@ -1,0 +1,191 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #0a0d11;
+  color: #e8edf2;
+  font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", system-ui, sans-serif;
+  user-select: none;
+}
+
+#stage {
+  position: fixed;
+  inset: 0;
+  display: block;
+  width: 100vw;
+  height: 100vh;
+}
+
+#camera-feed {
+  position: fixed;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.status {
+  position: fixed;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  max-width: min(88vw, 720px);
+  padding: 8px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 6px;
+  background: rgba(10, 14, 18, 0.78);
+  font-size: 13px;
+  line-height: 1.5;
+  letter-spacing: 0;
+  text-align: center;
+  backdrop-filter: blur(6px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+}
+
+.status.visible {
+  opacity: 1;
+}
+
+.status.ok {
+  color: #bfe6c8;
+  border-color: rgba(120, 220, 160, 0.35);
+}
+
+.status.error {
+  color: #ffb4ae;
+  border-color: rgba(255, 100, 90, 0.42);
+}
+
+.hint {
+  position: fixed;
+  top: 66px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  max-width: min(86vw, 560px);
+  padding: 7px 13px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  background: rgba(12, 16, 20, 0.68);
+  color: #f2d9a0;
+  font-size: 13px;
+  line-height: 1.5;
+  letter-spacing: 0;
+  text-align: center;
+  backdrop-filter: blur(6px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+}
+
+.hint.visible {
+  opacity: 1;
+}
+
+.controls {
+  position: fixed;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  z-index: 4;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  max-width: calc(100vw - 24px);
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(12, 16, 20, 0.72);
+  backdrop-filter: blur(8px);
+  opacity: 1;
+  transition: opacity 0.45s ease;
+}
+
+body.immersive .controls {
+  opacity: 0.06;
+}
+
+body.immersive .controls:hover,
+body.immersive .controls:focus-within {
+  opacity: 0.96;
+}
+
+.btn {
+  appearance: none;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #e8edf2;
+  font-size: 14px;
+  line-height: 1.2;
+  letter-spacing: 0;
+  white-space: nowrap;
+  padding: 8px 16px;
+  cursor: pointer;
+  transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+.btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.btn.primary {
+  border-color: rgba(96, 190, 255, 0.45);
+  background: rgba(96, 190, 255, 0.16);
+}
+
+.btn.primary:hover {
+  background: rgba(96, 190, 255, 0.28);
+}
+
+.smooth {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #c8d2da;
+  font-size: 13px;
+  line-height: 1.2;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.smooth input[type="range"] {
+  width: 130px;
+  accent-color: #6fc2ff;
+}
+
+.smooth output {
+  min-width: 28px;
+  color: #e8edf2;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 640px) {
+  .controls {
+    bottom: 12px;
+    gap: 8px;
+    padding: 8px;
+  }
+
+  .btn {
+    padding: 7px 12px;
+    font-size: 13px;
+  }
+
+  .smooth input[type="range"] {
+    width: 90px;
+  }
+}
