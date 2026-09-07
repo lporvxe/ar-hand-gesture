@@ -146,7 +146,7 @@
   async function loadModels() {
     showStatus('正在加载 MediaPipe 模型…', 'info', 0);
     try {
-      const visionMod = await import('../vendor/mediapipe/tasks-vision/vision_bundle.mjs');
+      const visionMod = await import('../vendor/mediapipe/tasks-vision/vision_bundle.js');
       const vision = await visionMod.FilesetResolver.forVisionTasks(VISION_WASM_DIR);
       handLandmarker = await createHandLandmarker(visionMod.HandLandmarker, vision);
       imageSegmenter = await createImageSegmenter(visionMod.ImageSegmenter, vision);

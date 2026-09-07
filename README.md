@@ -4,7 +4,9 @@
 
 ## 在线演示
 
-部署完成后在此填入 GitHub Pages 链接：`https://lporvxe.github.io/ar-hand-gesture/`
+在线体验地址：<https://lporvxe.github.io/ar-hand-gesture/>
+
+> 部署方式：仓库已内置 GitHub Actions 自动部署工作流（`.github/workflows/pages.yml`）。首次使用时在仓库 **Settings → Pages → Source** 选择 **GitHub Actions**，此后每次推送到 `main` 分支都会自动重新部署，无需手动操作。
 
 ## 功能
 
