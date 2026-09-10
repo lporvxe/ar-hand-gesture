@@ -4,25 +4,75 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AR 双手手势交互特效</title>
+  <meta name="description" content="浏览器端实时手势 AR：双手之间生成红、蓝、绿三块连续滤镜面片。">
+  <meta name="theme-color" content="#E8EDE4">
   <link rel="stylesheet" href="src/styles.css">
 </head>
 <body>
   <canvas id="stage"></canvas>
   <video id="camera-feed" playsinline muted autoplay></video>
 
+  <div class="sheet">
+    <div class="crop" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+
+    <header class="head">
+      <p class="mark">
+        <span class="mark__code">AR</span>
+        <span class="mark__name">双手手势交互特效</span>
+      </p>
+      <p class="spec">浏览器端实时手势 AR · MediaPipe HandLandmarker · 模型本地运行，加载后免联网</p>
+      <p class="led" id="model-led" data-state="idle">
+        <svg class="led__ring" viewBox="0 0 28 28" aria-hidden="true">
+          <circle class="led__track" cx="14" cy="14" r="11"></circle>
+          <circle class="led__arc" cx="14" cy="14" r="11"></circle>
+          <path class="led__cross" d="M14 3.5v4M14 20.5v4M3.5 14h4M20.5 14h4"></path>
+        </svg>
+        <span class="led__text" id="model-led-text">模型待加载</span>
+      </p>
+    </header>
+
+    <div class="body">
+      <div class="brief">
+        <p class="eyebrow">实时打样 · 双手 → 三块印版</p>
+        <h1 class="headline" data-text="双手之间，&#10;三块滤镜面片">双手之间，<br>三块滤镜面片</h1>
+        <ul class="plates">
+          <li class="plates__item">
+            <span class="swatch swatch--red" aria-hidden="true"></span>
+            <span class="plates__name">红色</span>
+            <span class="plates__fx">半调点阵 ＋ 人物抠像</span>
+          </li>
+          <li class="plates__item">
+            <span class="swatch swatch--blue" aria-hidden="true"></span>
+            <span class="plates__name">蓝色</span>
+            <span class="plates__fx">漫画风</span>
+          </li>
+          <li class="plates__item">
+            <span class="swatch swatch--green" aria-hidden="true"></span>
+            <span class="plates__name">绿色</span>
+            <span class="plates__fx">半调点阵 ＋ 人物抠像</span>
+          </li>
+        </ul>
+        <p class="note">把双手同时放进画面，两块手掌之间会实时生成三块连续的滤镜面片。没有摄像头时，先点「演示模式」看效果。</p>
+      </div>
+    </div>
+
+    <footer class="foot">
+      <div id="controls" class="controls">
+        <button id="btn-camera" class="btn btn--primary" type="button">启动摄像头</button>
+        <button id="btn-demo" class="btn" type="button">演示模式</button>
+        <button id="btn-reset" class="btn" type="button">重置</button>
+        <label class="smooth" for="smooth-range">
+          <span class="smooth__label">跟手平滑度</span>
+          <input id="smooth-range" type="range" min="0" max="100" value="55">
+          <output id="smooth-value" for="smooth-range">55</output>
+        </label>
+      </div>
+      <p class="fineprint">首次加载模型约 17 MB · 模型内置于本地 · 建议最新版 Chrome / Edge</p>
+    </footer>
+  </div>
+
   <div id="status" class="status hidden" role="status" aria-live="polite"></div>
   <div id="hint" class="hint hidden"></div>
-
-  <div id="controls" class="controls">
-    <button id="btn-camera" class="btn primary" type="button">启动摄像头</button>
-    <button id="btn-demo" class="btn" type="button">演示模式</button>
-    <button id="btn-reset" class="btn" type="button">重置</button>
-    <label class="smooth" for="smooth-range">
-      <span>跟手平滑度</span>
-      <input id="smooth-range" type="range" min="0" max="100" value="55">
-      <output id="smooth-value" for="smooth-range">55</output>
-    </label>
-  </div>
 
   <script src="src/app.js"></script>
 </body>

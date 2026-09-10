@@ -11,6 +11,8 @@
   const btnReset = document.getElementById('btn-reset');
   const rangeEl = document.getElementById('smooth-range');
   const valueEl = document.getElementById('smooth-value');
+  const ledEl = document.getElementById('model-led');
+  const ledTextEl = document.getElementById('model-led-text');
 
   const VISION_WASM_DIR = 'vendor/mediapipe/tasks-vision/wasm/';
   const HAND_MODEL_PATH = 'vendor/mediapipe/models/hand_landmarker.task';
@@ -79,6 +81,26 @@
   let statusTimer = null;
   const canvasPool = {};
 
+  const idle = {
+    running: false,
+    raf: 0,
+    lastT: 0,
+    startedAt: 0,
+    reg: 0,
+    speed: 0,
+    cy: 0,
+    pointer: { x: 0.5, y: 0.5, tx: 0.5, ty: 0.5 },
+    lay: null,
+    paper: null,
+    paperW: 0,
+    paperH: 0,
+    palette: null,
+    configs: null,
+  };
+
+  const reducedMotion =
+    typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+
   const demoParticles = Array.from({ length: 72 }, () => ({
     x: Math.random(),
     y: Math.random(),
@@ -134,6 +156,13 @@
     hintEl.classList.remove('visible');
   }
 
+  // 版头右上角的套准标记同时充当模型状态灯：加载中转动，就绪后闭合。
+  function setLed(stateName, text) {
+    if (!ledEl) return;
+    ledEl.dataset.state = stateName;
+    if (ledTextEl && text) ledTextEl.textContent = text;
+  }
+
   function ensureModels() {
     if (modelsReady) return Promise.resolve(true);
     if (modelsPromise) return modelsPromise;
@@ -145,16 +174,19 @@
 
   async function loadModels() {
     showStatus('正在加载 MediaPipe 模型…', 'info', 0);
+    setLed('loading', '模型加载中');
     try {
       const visionMod = await import('../vendor/mediapipe/tasks-vision/vision_bundle.js');
       const vision = await visionMod.FilesetResolver.forVisionTasks(VISION_WASM_DIR);
       handLandmarker = await createHandLandmarker(visionMod.HandLandmarker, vision);
       imageSegmenter = await createImageSegmenter(visionMod.ImageSegmenter, vision);
       modelsReady = true;
+      setLed('ready', '模型已就绪');
       showStatus('MediaPipe 模型加载完成。', 'ok', 2500);
       return true;
     } catch (err) {
       console.error('MediaPipe init failed:', err);
+      setLed('error', '模型加载失败');
       showStatus('MediaPipe 模型加载失败，请确认 vendor/mediapipe 目录完整后刷新重试。', 'error', 8000);
       return false;
     }
@@ -325,6 +357,7 @@
     state.mode = 'camera';
     state.frame = 0;
     state.smoothHands = null;
+    stopIdleLoop();
     startLoop();
     document.body.classList.add('immersive');
     showStatus('摄像头已启动，请将双手同时放入画面。', 'ok', 3200);
@@ -342,7 +375,7 @@
     state.smoothHands = null;
     document.body.classList.remove('immersive');
     hideHint();
-    drawIdle();
+    startIdleLoop();
   }
 
   function startDemo() {
@@ -351,6 +384,7 @@
     state.mode = 'demo';
     state.frame = 0;
     state.smoothHands = null;
+    stopIdleLoop();
     startLoop();
     document.body.classList.add('immersive');
     showStatus('演示模式已启动，将自动生成三块色面。', 'ok', 3000);
@@ -1131,14 +1165,415 @@
     return state.lastDemoHands;
   }
 
-  function drawIdle() {
+  /* -------------------------------------------------------------------------
+     首页「打样台」
+     纸面、双手关键点与三块印版都画在同一张 canvas 上，版色与页面 CSS 变量
+     共用同一组色值，三块印版的图形来自 buildQuads 的真实几何。
+     ------------------------------------------------------------------------- */
+
+  const HAND_BONES = [
+    [0, 1], [1, 2], [2, 3], [3, 4],
+    [0, 5], [5, 6], [6, 7], [7, 8],
+    [5, 9], [9, 10], [10, 11], [11, 12],
+    [9, 13], [13, 14], [14, 15], [15, 16],
+    [13, 17], [17, 18], [18, 19], [19, 20],
+    [0, 17],
+  ];
+
+  // 出厂错版量：红版偏上、蓝版偏右下、绿版偏下，相邻两版之间会露出纸色
+  const PLATE_OFFSETS = {
+    red: { x: -3.2, y: -5.0 },
+    blue: { x: 2.4, y: 1.4 },
+    green: { x: -1.6, y: 5.2 },
+  };
+
+  const tokenCache = Object.create(null);
+
+  function cssVar(name, fallback) {
+    if (tokenCache[name]) return tokenCache[name];
+    let v = '';
+    try {
+      v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    } catch (_) {
+      v = '';
+    }
+    tokenCache[name] = v || fallback;
+    return tokenCache[name];
+  }
+
+  function hexToRgba(color, alpha) {
+    const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(String(color).trim());
+    if (!m) return color;
+    let v = m[1];
+    if (v.length === 3) v = v[0] + v[0] + v[1] + v[1] + v[2] + v[2];
+    const n = parseInt(v, 16);
+    return (
+      'rgba(' + ((n >> 16) & 255) + ', ' + ((n >> 8) & 255) + ', ' + (n & 255) + ', ' + alpha + ')'
+    );
+  }
+
+  function clamp01(v) {
+    return v < 0 ? 0 : v > 1 ? 1 : v;
+  }
+
+  function idlePalette() {
+    if (idle.palette) return idle.palette;
+    idle.palette = {
+      ink: cssVar('--ink', '#161a22'),
+      paper: cssVar('--paper', '#e8ede4'),
+      red: cssVar('--plate-red', '#a21e31'),
+      blue: cssVar('--plate-blue', '#1b1bd4'),
+      mint: cssVar('--plate-mint', '#d6f0d6'),
+      mintInk: cssVar('--plate-mint-ink', '#0e2a98'),
+    };
+    return idle.palette;
+  }
+
+  function idleConfigs() {
+    if (idle.configs) return idle.configs;
+    const pal = idlePalette();
+    idle.configs = {
+      // 红版：白底 + 红色半调网点（对应滤镜里的半调 + 抠像）
+      red: {
+        ground: '#f8faf4',
+        ink: pal.red,
+        alt: [pal.red, hexToRgba(pal.red, 0.88), hexToRgba(pal.red, 0.74)],
+        cell: 12.5,
+        maxR: 4.7,
+        ramp: 'tl',
+        phase: 0,
+      },
+      // 蓝版：满版电光蓝，网点是挖空的纸色（对应漫画风的实底色块）
+      blue: {
+        ground: pal.blue,
+        ink: pal.paper,
+        cell: 9,
+        maxR: 3.9,
+        ramp: 'down',
+        phase: 1.7,
+      },
+      // 绿版：薄荷底 + 深蓝网点（对应绿滤镜的底色与点色）
+      green: {
+        ground: pal.mint,
+        ink: pal.mintInk,
+        alt: [pal.mintInk, hexToRgba(pal.mintInk, 0.88), hexToRgba(pal.mintInk, 0.74)],
+        cell: 12.5,
+        maxR: 5.2,
+        ramp: 'right',
+        phase: 3.1,
+      },
+    };
+    return idle.configs;
+  }
+
+  function getIdlePaper() {
     const cw = canvas.width;
     const ch = canvas.height;
-    const g = ctx.createLinearGradient(0, 0, 0, ch);
-    g.addColorStop(0, '#0a0d11');
-    g.addColorStop(1, '#12181f');
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, cw, ch);
+    if (idle.paper && idle.paperW === cw && idle.paperH === ch) return idle.paper;
+
+    const pal = idlePalette();
+    const c = document.createElement('canvas');
+    c.width = cw;
+    c.height = ch;
+    const g = c.getContext('2d');
+
+    const grad = g.createLinearGradient(0, ch * 0.04, cw * 0.4, ch);
+    grad.addColorStop(0, '#eef2e9');
+    grad.addColorStop(0.55, pal.paper);
+    grad.addColorStop(1, '#e3e9de');
+    g.fillStyle = grad;
+    g.fillRect(0, 0, cw, ch);
+
+    const specks = Math.round((cw * ch) / 2400);
+    for (let i = 0; i < specks; i++) {
+      const x = Math.random() * cw;
+      const y = Math.random() * ch;
+      const r = Math.random();
+      if (r < 0.52) {
+        g.fillStyle = 'rgba(22, 26, 34, ' + (0.03 + Math.random() * 0.05).toFixed(3) + ')';
+        g.fillRect(x, y, Math.random() < 0.25 ? 2 : 1, 1);
+      } else if (r < 0.78) {
+        g.fillStyle = 'rgba(255, 255, 255, ' + (0.32 + Math.random() * 0.4).toFixed(3) + ')';
+        g.fillRect(x, y, 2, 1);
+      } else if (r < 0.9) {
+        g.fillStyle = 'rgba(162, 30, 49, ' + (0.05 + Math.random() * 0.07).toFixed(3) + ')';
+        g.fillRect(x, y, 1, 1);
+      } else {
+        g.fillStyle = 'rgba(27, 27, 214, ' + (0.04 + Math.random() * 0.06).toFixed(3) + ')';
+        g.fillRect(x, y, 2, 1);
+      }
+    }
+
+    idle.paper = c;
+    idle.paperW = cw;
+    idle.paperH = ch;
+    return c;
+  }
+
+  // 宽屏时印版占右侧，窄屏时印版占上方，文字落到下部
+  function idleLayout(cw, ch) {
+    const wide = cw / ch > 1.2;
+    if (wide) {
+      return {
+        gap: 1.5,
+        tilt: -0.32,
+        cx: cw * 0.71,
+        cy: ch * 0.5,
+        boxW: cw * 0.5,
+        boxH: ch * 0.66,
+      };
+    }
+    return {
+      gap: 1.32,
+      tilt: -0.62,
+      cx: cw * 0.5,
+      cy: ch * 0.3,
+      boxW: cw * 0.96,
+      boxH: ch * 0.34,
+    };
+  }
+
+  // 先在单位尺度上摆好一对镜像的手，量出外框，再整体旋转/缩放/平移到目标区域
+  function idlePose(lay, t) {
+    const sec = t / 1000;
+    const spread = 0.94 + Math.sin(sec * 0.44 + 0.7) * 0.05;
+    const fan = Math.PI / 2 + Math.sin(sec * 0.37) * 0.035;
+    const bob = Math.sin(sec * 0.62) * 0.02 + idle.cy * 0.35;
+    const sway = Math.sin(sec * 0.31) * 0.02;
+    const left = buildHandTemplate(-lay.gap / 2 + sway, bob, fan, 1, spread, -1);
+    // 右手＝左手关于画面中线的镜像，两手才是真正面对面
+    const right = left.map((p) => ({ x: -p.x, y: p.y }));
+    const all = left.concat(right);
+
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const p of all) {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+    }
+    const ox = (minX + maxX) / 2;
+    const oy = (minY + maxY) / 2;
+    const cos = Math.cos(lay.tilt);
+    const sin = Math.sin(lay.tilt);
+    const spun = all.map((p) => ({
+      x: (p.x - ox) * cos - (p.y - oy) * sin,
+      y: (p.x - ox) * sin + (p.y - oy) * cos,
+    }));
+    let hw = 1;
+    let hh = 1;
+    for (const p of spun) {
+      hw = Math.max(hw, Math.abs(p.x));
+      hh = Math.max(hh, Math.abs(p.y));
+    }
+    const scale = Math.min(lay.boxW / (hw * 2), lay.boxH / (hh * 2));
+    const place = (i) => ({
+      x: lay.cx + spun[i].x * scale,
+      y: lay.cy + spun[i].y * scale,
+    });
+    const outLeft = left.map((p, i) => place(i));
+    const outRight = right.map((p, i) => place(i + left.length));
+    return [outLeft, outRight];
+  }
+
+  function plateDensity(cfg, x, y, b, t) {
+    const u = (x - b.x) / b.w;
+    const v = (y - b.y) / b.h;
+    let d;
+    if (cfg.ramp === 'tl') d = 0.95 - 0.58 * v - 0.14 * u;
+    else if (cfg.ramp === 'down') d = 0.18 + 0.74 * v;
+    else d = 0.24 + 0.68 * u;
+    d += Math.sin(t * 0.00042 + cfg.phase + u * 2.1 + v * 1.5) * 0.055;
+    return clamp01(d);
+  }
+
+  function drawIdlePlate(target, pts, cfg, off, t, u) {
+    const q = pts.map((p) => ({ x: p.x + off.x, y: p.y + off.y }));
+    const b = quadBounds(q, 2);
+    if (!b) return;
+
+    const cell = cfg.cell * u;
+    const maxR = cfg.maxR * u;
+    const seed = (cfg.phase * 1000) | 0;
+    const startX = Math.floor(b.x / cell) * cell;
+    const startY = Math.floor(b.y / cell) * cell;
+
+    target.save();
+    traceQuad(target, q);
+    target.clip();
+    target.fillStyle = cfg.ground;
+    target.fillRect(b.x, b.y, b.w, b.h);
+
+    for (let gy = startY; gy < b.y + b.h + cell; gy += cell) {
+      for (let gx = startX; gx < b.x + b.w + cell; gx += cell) {
+        const cx = gx + cell / 2;
+        const cy = gy + cell / 2;
+        const d = plateDensity(cfg, cx, cy, b, t);
+        if (d < 0.05) continue;
+        const h = hash2(gx, gy, 0x9e3779b9 + seed);
+        const rnd = h / 4294967295;
+        const r = Math.max(0.5, Math.sqrt(d) * maxR);
+        target.fillStyle = cfg.alt ? cfg.alt[h % cfg.alt.length] : cfg.ink;
+        target.beginPath();
+        target.arc(
+          cx + (rnd - 0.5) * cell * 0.22,
+          cy + (((h >>> 8) / 4294967295) - 0.5) * cell * 0.22,
+          r,
+          0,
+          Math.PI * 2
+        );
+        target.fill();
+      }
+    }
+    target.restore();
+  }
+
+  function drawIdleHand(target, pts, pal, u) {
+    target.save();
+    target.lineJoin = 'round';
+    target.lineCap = 'round';
+
+    target.strokeStyle = hexToRgba(pal.ink, 0.42);
+    target.lineWidth = 1.6 * u;
+    target.beginPath();
+    for (let i = 0; i < HAND_BONES.length; i++) {
+      const a = pts[HAND_BONES[i][0]];
+      const b = pts[HAND_BONES[i][1]];
+      target.moveTo(a.x, a.y);
+      target.lineTo(b.x, b.y);
+    }
+    target.stroke();
+
+    target.fillStyle = hexToRgba(pal.ink, 0.55);
+    for (let i = 1; i < pts.length; i++) {
+      target.beginPath();
+      target.arc(pts[i].x, pts[i].y, 1.9 * u, 0, Math.PI * 2);
+      target.fill();
+    }
+    target.beginPath();
+    target.arc(pts[0].x, pts[0].y, 3.4 * u, 0, Math.PI * 2);
+    target.fill();
+
+    // 指尖标记：与摄像头模式同一套语言
+    target.strokeStyle = hexToRgba(pal.ink, 0.72);
+    target.lineWidth = 1.5 * u;
+    for (let i = 0; i < FINGERTIP_INDICES.length; i++) {
+      const p = pts[FINGERTIP_INDICES[i]];
+      target.beginPath();
+      target.arc(p.x, p.y, 6.5 * u, 0, Math.PI * 2);
+      target.stroke();
+    }
+    target.restore();
+  }
+
+  function drawIdleFrame(t) {
+    const cw = canvas.width;
+    const ch = canvas.height;
+    if (!cw || !ch) return;
+
+    const art = reducedMotion ? 0 : t;
+    const pal = idlePalette();
+    const cfgs = idleConfigs();
+    const u = Math.max(0.75, Math.min(1.3, Math.min(cw, ch) / 1080));
+    const lay = idleLayout(cw, ch);
+    const hands = idlePose(lay, art);
+    const quads = buildQuads(hands[0], hands[1]);
+
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.drawImage(getIdlePaper(), 0, 0);
+
+    // 三块印版按 multiply 叠印：重叠处变深，真实还原套印效果
+    const settle = 1 - Math.pow(1 - idle.reg, 3);
+    const jitter = idle.speed * 9 * u;
+    ctx.save();
+    ctx.globalCompositeOperation = 'multiply';
+    for (let i = 0; i < quads.length; i++) {
+      const q = quads[i];
+      const base = PLATE_OFFSETS[q.name];
+      const k = (1 + 2.4 * (1 - settle)) * u;
+      const wob = Math.sin(art * 0.012 + i * 2.1) * jitter;
+      drawIdlePlate(ctx, q.pts, cfgs[q.name], { x: base.x * k + wob * 0.6, y: base.y * k + wob }, art, u);
+    }
+    ctx.restore();
+
+    // 版框：印版的实际位置，与偏移后的印面形成错版对照
+    ctx.save();
+    ctx.strokeStyle = hexToRgba(pal.blue, 0.2);
+    ctx.lineWidth = 1 * u;
+    for (let i = 0; i < quads.length; i++) {
+      traceQuad(ctx, quads[i].pts);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    drawIdleHand(ctx, hands[0], pal, u);
+    drawIdleHand(ctx, hands[1], pal, u);
+  }
+
+  function updateIdle(t) {
+    const dt = idle.lastT ? Math.min(80, t - idle.lastT) : 16;
+    idle.lastT = t;
+    const p = idle.pointer;
+    const k = Math.min(1, dt / 220);
+    p.x += (p.tx - p.x) * k;
+    p.y += (p.ty - p.y) * k;
+    idle.cy += ((p.y - 0.5) * 0.6 - idle.cy) * Math.min(1, dt / 320);
+    idle.speed *= Math.pow(0.9, dt / 16.7);
+    if (idle.speed < 0.001) idle.speed = 0;
+    idle.reg = clamp01((t - idle.startedAt) / 950);
+  }
+
+  function idleTick(t) {
+    if (!idle.running) return;
+    idle.raf = requestAnimationFrame(idleTick);
+    updateIdle(t);
+    drawIdleFrame(t);
+  }
+
+  function startIdleLoop() {
+    if (idle.running || state.mode !== 'idle') return;
+    idle.running = true;
+    idle.startedAt = performance.now();
+    idle.lastT = 0;
+    idle.reg = 0;
+    idle.raf = requestAnimationFrame(idleTick);
+  }
+
+  function stopIdleLoop() {
+    idle.running = false;
+    if (idle.raf) {
+      cancelAnimationFrame(idle.raf);
+      idle.raf = 0;
+    }
+  }
+
+  let pointerSeen = false;
+  let lastPointerX = 0;
+  let lastPointerY = 0;
+  let lastPointerT = 0;
+
+  // 指针跟手：位置带动整版平移，速度带动错版量——和摄像头模式的跟手平滑度同源
+  function onIdlePointerMove(e) {
+    const p = idle.pointer;
+    p.tx = clamp01(e.clientX / window.innerWidth);
+    p.ty = clamp01(e.clientY / window.innerHeight);
+    const now = performance.now();
+    if (pointerSeen) {
+      const dist = Math.hypot(e.clientX - lastPointerX, e.clientY - lastPointerY);
+      const dt = Math.max(8, now - lastPointerT);
+      const v = dist / dt;
+      if (v > idle.speed) idle.speed = Math.min(1, v / 2.4);
+    }
+    pointerSeen = true;
+    lastPointerX = e.clientX;
+    lastPointerY = e.clientY;
+    lastPointerT = now;
+    if (!idle.running) drawIdleFrame(now);
   }
 
   function render(t) {
@@ -1152,7 +1587,7 @@
     } else if (state.mode === 'demo') {
       drawDemoScene(t, cw, ch);
     } else {
-      drawIdle();
+      drawIdleFrame(t);
       return;
     }
 
@@ -1194,10 +1629,15 @@
     state.smoothing = Number(rangeEl.value) / 100;
     valueEl.textContent = rangeEl.value;
   });
-  window.addEventListener('resize', resize);
+  window.addEventListener('resize', () => {
+    resize();
+    if (!idle.running) drawIdleFrame(performance.now());
+  });
+  window.addEventListener('pointermove', onIdlePointerMove, { passive: true });
+  window.addEventListener('pointerdown', onIdlePointerMove, { passive: true });
 
   resize();
-  drawIdle();
+  startIdleLoop();
   if (location.protocol !== 'file:') {
     ensureModels().then((ok) => {
       if (ok) document.body.dataset.mediapipeReady = '1';
